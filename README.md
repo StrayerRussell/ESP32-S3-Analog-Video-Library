@@ -6,14 +6,18 @@ This is a library for the ESP32-S3 which uses the LCD peripheral to generate all
 pretty up the code)
 
 Working Features
-Monochrome NTSC Video 720*480 and 960*540
+
+Monochrome NTSC Video 720 x 480 and 960 x 540
+
 Image drawing functions that make drawing images to external PSRAM much faster and more efficient
  - (onebitimage, monoimage)
 
 Features in Development
+
 Color NTSC (Need to make color encoding more efficient and get a better resistor DAC for testing fidelity)
 
 Future Features (Hopefully)
+
 Block Truncation Coding Image drawing function (Low memory footprint for almost 8-bit grayscale quality)
 Reimplement VGA modes to make a unified library
 PAL video modes
