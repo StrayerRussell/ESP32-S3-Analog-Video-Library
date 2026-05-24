@@ -28,28 +28,6 @@ class CVBSMode
   {
   }
 
-  /*
-  CVBSMode(const 
-  
-  CVBSMode &m) 
-  {
-    this->EqPulseSamples = m.EqPulseSamples;
-    this->BroadPulseSamples = m.BroadPulseSamples;
-    this->HSyncSamples = m.HSyncSamples;
-    this->HBackSamples = m.HBackSamples;
-    this->ClrBrstHBackOffset = m.ClrBrstHBackOffset;
-    this->ClrBrstSamples = m.ClrBrstSamples;
-    this->ClrBrstFreq = m.ClrBrstFreq;
-    this->VisibleLineSamples = m.VisibleLineSamples;
-    this->HFrontSamples = m.HFrontSamples;
-    this->TotalLines = m.TotalLines;
-    this->VisibleLines = m.VisibleLines;
-    this->SyncType = m.SyncType;
-    this->Interlaced = m.Interlaced;
-    this->Frequency = m.Frequency;
-  }
-  */
-
   CVBSMode(int EqPulseSamples, int BroadPulseSamples, int HSyncSamples, int HBackSamples, int ClrBrstHBackOffset, int ClrBrstSamples, 
   int ClrBrstFreq, int VisibleLineSamples, int HFrontSamples, int TotalLines, int VisibleLines, int SyncType, bool Interlaced, int Frequency)
   {

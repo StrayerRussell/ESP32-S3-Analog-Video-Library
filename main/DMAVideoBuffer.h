@@ -3,15 +3,35 @@
 #include <rom/cache.h>
 #include <esp_heap_caps.h>
 
+#define MAX_BUFFERS 2
+#define MAX_LINES 1024
+#define MAX_DMA_BLOCK_SIZE 4029
+#define ALIGNMENT_PSRAM 64
+#define ALIGNMENT_SRAM 4
+
 extern int Cache_WriteBack_Addr(uint32_t addr, uint32_t size);
+
+/*
+struct DMAVideoBuffer {
+    int descCnt;
+    dma_descriptor_t *descs;
+	void *buff[MAX_BUFFERS][MAX_LINES];
+	int bufferCount;
+	bool valid;
+	int lines;
+	int lineSize;
+	bool psram;
+	int clones; 
+};
+*/
 
 class DMAVideoBuffer
 {
 	protected:
 	int	descriptorCount;
 	dma_descriptor_t *descriptors;
-	static const int MAX_BUFFERS = 2;	//need to malloc this
-	static const int MAX_LINES = 1024;	//need to malloc this
+	//static const int MAX_BUFFERS = 2;	//need to malloc this
+	//static const int MAX_LINES = 1024;	//need to malloc this
 	void *buffer[MAX_BUFFERS][MAX_LINES];
 
 	public:
@@ -22,13 +42,13 @@ class DMAVideoBuffer
 	bool psram;
 	int clones;
 
-	static const int MAX_DMA_BLOCK_SIZE = 4092;
-	static const int ALIGNMENT_PSRAM = 64;
-	static const int ALIGNMENT_SRAM = 4;
+	//static const int MAX_DMA_BLOCK_SIZE = 4092;
+	//static const int ALIGNMENT_PSRAM = 64;
+	//static const int ALIGNMENT_SRAM = 4;
 
 	void attachBuffer(int b = 0)
 	{
-		for(int i = 0; i < lines; i++) 
+        for(int i = 0; i < lines; i++) 
 			for(int j = 0; j < clones; j++)
 				descriptors[i * clones + j].buffer = buffer[b][i];
 	}
@@ -42,16 +62,6 @@ class DMAVideoBuffer
 	uint16_t *getLineAddr16(int y ,int b = 0)
 	{
 		return (uint16_t*)buffer[b][y];
-	}
-
-	uint32_t *getLineAddr32(int y ,int b = 0)
-	{
-		return (uint32_t*)buffer[b][y];
-	}
-
-	uint64_t *getLineAddr64(int y ,int b = 0)
-	{
-		return (uint64_t*)buffer[b][y];
 	}
 
 	DMAVideoBuffer(int lines, int lineSize, int clones = 1, bool ring = true, bool psram = true, int bufferCount = 1)

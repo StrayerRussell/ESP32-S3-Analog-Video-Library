@@ -8,7 +8,7 @@
 //const size_t MAX_DECODED_DATA_SIZE = 43208; // Adjust the size based on your image resolution and color depth
 //uint8_t decodedData[MAX_DECODED_DATA_SIZE];
 
-const PinConfig pins(11,12,13,14,15,16,17,18,-1,-1,-1,-1,-1,-1,-1,-1);
+int pins[16] = {11,12,13,14,15,16,17,18,-1,-1,-1,-1,-1,-1,-1,-1};
 //const PinConfig pins(1,2,3,4,5,6,7,8,-1,-1,-1,-1,-1,-1,-1,-1);
 //const PinConfig pins(18,17,16,15,14,13,12,11,-1,-1,-1,-1,-1,-1,-1,-1);
 //const PinConfig pins(8,7,6,5,4,3,2,1,-1,-1,-1,-1,-1,-1,-1,-1);
@@ -32,11 +32,9 @@ extern "C"
         cvbs.doColorburst = false;
         //cvbs.doColorburst = true;
 
-        if(!cvbs.init(pins, mode, 8))
-        {
+        if(!cvbs.init(pins, mode, 8)) {
             printf("Failed to Initialize, Halting\n");
-            while(1)
-            {
+            while(1) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 //delay(1);
             }
@@ -55,8 +53,7 @@ extern "C"
         //int curentMillis = 0;
         cvbs.onebitimage(bitonal_image, 720, 480, 120, 0);
 
-        while(1)
-        {
+        while(1) {
             /*
             //printf("Color Number: %d\n", color);
             for (int y = 0; y < 540; y++)
