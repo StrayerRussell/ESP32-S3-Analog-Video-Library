@@ -7,7 +7,7 @@
 #include <esp_private/periph_ctrl.h>
 #include <hal/gpio_hal.h>
 #include <soc/lcd_cam_struct.h>
-#include "CVBS.h"
+#include "cvbs.h"
 
 //uint32_t lineMillis = 0;
 
@@ -56,7 +56,9 @@ void CVBS::attachPinToSignal(int pin, int signal) {
 	gpio_set_drive_capability((gpio_num_t)pin, (gpio_drive_cap_t)3);
 }
 
-bool CVBS::init(int* pins, CVBSMode mode, int bits) {
+//bool CVBS::init(int* pins, CVBSMode mode, int bits) {
+bool CVBS::init(int* pins, struct cvbsMode mode, int bits) {
+    mode.TotalLineSamples = mode.HSyncSamples + mode.HBackSamples + mode.VisibleLineSamples + mode.HFrontSamples;
     this->mode = mode;
     this->bits = bits;
     backBuffer = 0;
@@ -64,12 +66,12 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     // I am not using line doubling but I am keeping clones a variable just in case.
     int Clones = 1;
 
-    //int lineSampleIndex = mode.totalLineSamples();
+    //int lineSampleIndex = mode.TotalLineSamples;
 
-    this->sinLUT = new double[mode.TotalLineSamples()];
-    this->cosLUT = new double[mode.TotalLineSamples()];
+    this->sinLUT = new double[mode.TotalLineSamples];
+    this->cosLUT = new double[mode.TotalLineSamples];
 
-    initDmaBuff(&dmaBuffer, mode.TotalLines, mode.TotalLineSamples() * (bits/8), Clones, true, usePsram, bufferCount);
+    initDmaBuff(&dmaBuffer, mode.TotalLines, mode.TotalLineSamples * (bits/8), Clones, true, usePsram, bufferCount);
     if (!dmaBuffer.valid) {
         deInitDmaBuff(&dmaBuffer);
         printf("Failed to create DMA Buffer\n");
@@ -114,9 +116,9 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     //LCD_CAM.lcd_misc.lcd_vfk_cyclelen = 0;
     //LCD_CAM.lcd_misc.lcd_vbk_cyclelen = 0;
     //LCD_CAM.lcd_ctrl1.lcd_ha_width = mode.VisibleLineSamples;	//12 bit
-    //LCD_CAM.lcd_ctrl1.lcd_ht_width = mode.TotalLineSamples();	//12 bit
+    //LCD_CAM.lcd_ctrl1.lcd_ht_width = mode.TotalLineSamples;	//12 bit
 
-    //HAL_FORCE_MODIFY_U32_REG_FIELD(LCD_CAM.lcd_ctrl1, lcd_vb_front, mode.BroadPulseSamples + (mode.TotalLineSamples() - mode.BroadPulseSamples));	//8bit
+    //HAL_FORCE_MODIFY_U32_REG_FIELD(LCD_CAM.lcd_ctrl1, lcd_vb_front, mode.BroadPulseSamples + (mode.TotalLineSamples - mode.BroadPulseSamples));	//8bit
     //LCD_CAM.lcd_ctrl.lcd_va_height = mode.VisibleLines * Clones;																																														 //10 bit
     //LCD_CAM.lcd_ctrl.lcd_vt_height = mode.TotalLines;																																																							 //10 bit
     //HAL_FORCE_MODIFY_U32_REG_FIELD(LCD_CAM.lcd_ctrl2, lcd_hsync_position, mode.HSyncSamples);
@@ -192,7 +194,7 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     // Populate Sin and Cos lookup tables for color modulation
     if (doColorburst) {
         printf("Populating Sin and Cos Lookup Tables for Color Modulation\n");
-        for (int i = 0; i < mode.TotalLineSamples(); i++) {
+        for (int i = 0; i < mode.TotalLineSamples; i++) {
                 // Calculate phase with the applied phase shift
                 double phase = i * phaseIncrementPerSample + BestPhaseShift;
 
@@ -210,7 +212,7 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     printf("Populating Sin and Cos Lookup Tables for Color Modulation\n");
     int sinIndex = 0;
     int togglingInverter = -1000000;
-    for (int a = 0; a < mode.TotalLineSamples()/ClrbrstSquarewaveWidth; a++) {
+    for (int a = 0; a < mode.TotalLineSamples/ClrbrstSquarewaveWidth; a++) {
         for(int b = 0; b < round((ClrbrstSquarewaveWidth * a)/a); b++) {
             //printf("");
             this->sinLUT[sinIndex++] = BlankLevel + (ClrbrstVerticalOffset * togglingInverter);
@@ -227,7 +229,7 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
         case 1:	//NTSC Sync
             printf("Starting NTSC Sync Population\n");
             //Populates entire framebuffer with Blank level for later sync overwriting
-            for (int b = 0; b < mode.TotalLines; b++) { fillbufferwithvalueforlength(BlankLevel, mode.TotalLineSamples(), 0, b, a); }
+            for (int b = 0; b < mode.TotalLines; b++) { fillbufferwithvalueforlength(BlankLevel, mode.TotalLineSamples, 0, b, a); }
             // populates V sync for field one
             populateVsync(false, SyncLevel, 6, 6, 6, lineIndex, a);
             // populates the H sync and colorburst of all field one lines including 13 blank lines
@@ -243,7 +245,7 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
         case 2: //PAL Sync
             printf("Starting PAL Sync Population\n");
             //Populates entire framebuffer with Blank level for later sync overwriting
-            for (int b = 0; b < mode.TotalLines; b++) { fillbufferwithvalueforlength(BlankLevel, mode.TotalLineSamples(), 0, b, a); }
+            for (int b = 0; b < mode.TotalLines; b++) { fillbufferwithvalueforlength(BlankLevel, mode.TotalLineSamples, 0, b, a); }
             // populates V sync for field one
             populateVsync(false, SyncLevel, 6, 5, 5, lineIndex, a);
             // populates the H sync and colorburst of all field one lines including 13 blank lines
@@ -678,7 +680,7 @@ void CVBS::fillbufferwithvalueforlength(int value, int len, int offset, int line
 
 void CVBS::fillbufferwithvalue(uint32_t value) {
 	for (int y = 0; y < mode.TotalLines; y++) {
-		for (int x = 0; x < mode.TotalLineSamples(); x++) {
+		for (int x = 0; x < mode.TotalLineSamples; x++) {
 			switch(bits) {
 				case 8:
 					getLineAddr8(&dmaBuffer, y, backBuffer)[x] = value;
@@ -795,8 +797,8 @@ bool CVBS::show() {
 void CVBS::populateVsync(bool halfOffset, int syncLevel, int numPre, int numSync, int numPost, int &lineIndex, int bufferNumber) {
 	// Handles 6 NTSC Pre Equalisation Pulses. 2 Per Line Repeats 3 times for a total of 6
 	int sampleIndex = 0;
-	int lineSamples = mode.TotalLineSamples();
-	int halfLineSamples = mode.TotalLineSamples() / 2;
+	int lineSamples = mode.TotalLineSamples;
+	int halfLineSamples = mode.TotalLineSamples / 2;
 	if(halfOffset) sampleIndex = halfLineSamples;
 	for (int b = 0; b < numPre; b++) {
 		fillbufferwithvalueforlength(syncLevel, mode.EqPulseSamples, sampleIndex, lineIndex, bufferNumber);

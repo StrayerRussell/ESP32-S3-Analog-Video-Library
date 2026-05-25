@@ -1,13 +1,14 @@
 #ifndef CVBS_H
 #define CVBS_H
 
-#include "DMAVideoBuffer.c"
-#include "CVBSModes.h"
+#include "dmaVideoBuffer.c"
+#include "cvbsModes.h"
 
 class CVBS
 {
 	public:
-	CVBSMode mode;
+    struct cvbsMode mode;
+	//CVBSMode mode;
 	int bufferCount;
 	bool doColorburst;
 	int bits;
@@ -25,7 +26,7 @@ class CVBS
 	void fillbufferwithvalueforlength(int value, int len, int offset, int line, int bufferNumber);
 	void populateVsync(bool halfOffset, int syncLevel, int numPre, int numSync, int numPost, int &lineIndex, int bufferNumber);
 	void populateHsync(int syncLevel, int blankLevel, double phaseIncrementPerSample, int &lineIndex, int bufferNumber);
-	bool init(int* pins, const CVBSMode mode, int bits);
+	bool init(int* pins, struct cvbsMode mode, int bits);
 	bool start();
 	bool show();
 	void onebitdot(uint32_t x, uint32_t y, bool state);

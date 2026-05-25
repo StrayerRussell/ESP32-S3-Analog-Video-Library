@@ -14,11 +14,8 @@ int pins[16] = {11,12,13,14,15,16,17,18,-1,-1,-1,-1,-1,-1,-1,-1};
 //const PinConfig pins(8,7,6,5,4,3,2,1,-1,-1,-1,-1,-1,-1,-1,-1);
 
 CVBS cvbs;
-//CVBSMode mode = CVBSMode::MODE_720x480x30NTSC;
-CVBSMode mode = CVBSMode::MODE_960x480x30NTSC;
-//CVBSMode mode = CVBSMode::MODE_FractionalDivi;
 //CVBSMode mode = CVBSMode::MODE_960x540x30NTSC;
-//CVBSMode mode = CVBSMode::MODE_21MHZNTSC;
+struct cvbsMode mode = MODE_960x480x30NTSC;
 
 extern "C" 
 {

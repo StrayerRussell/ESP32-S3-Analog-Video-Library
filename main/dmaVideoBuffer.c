@@ -1,4 +1,4 @@
-#include "DMAVideoBuffer.h"
+#include "dmaVideoBuffer.h"
 
 void attachBuffer(struct dmaBuff *dma, int b)
 {
