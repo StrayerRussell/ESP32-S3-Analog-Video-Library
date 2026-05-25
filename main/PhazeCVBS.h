@@ -9,7 +9,7 @@
 #include <soc/lcd_cam_struct.h>
 #include "CVBS.h"
 
-uint32_t lineMillis = 0;
+//uint32_t lineMillis = 0;
 
 /*
 #ifndef min
@@ -33,12 +33,16 @@ uint32_t lineMillis = 0;
 CVBS::CVBS() {
 		bufferCount = 1;
 		doColorburst = true;
-		dmaBuffer = 0;
 		usePsram = true;
 		dmaChannel = 0;
+        dmaBuffer.valid = false;
+        dmaBuffer.descriptors = nullptr;
 }
 
 CVBS::~CVBS() {
+        if (dmaBuffer.valid) {
+            deInitDmaBuff(&dmaBuffer);
+        }
 		bits = 0;
 		backBuffer = 0;
 }
@@ -56,20 +60,6 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     this->mode = mode;
     this->bits = bits;
     backBuffer = 0;
-    switch(bits) {
-        case 8:
-            this->interlacingLUT = new void*[2]; // Allocate for two buffers
-            for (int i = 0; i < 2; ++i) {
-                ((void**)this->interlacingLUT)[i] = new uint8_t*[mode.VisibleLines]; // Allocate for each line in the buffer
-            }
-            break;
-        case 16:
-            this->interlacingLUT = new void*[2]; // Allocate for two buffers
-            for (int i = 0; i < 2; ++i) {
-                ((void**)this->interlacingLUT)[i] = new uint16_t*[mode.VisibleLines]; // Allocate for each line in the buffer
-            }
-            break;
-    }
 
     // I am not using line doubling but I am keeping clones a variable just in case.
     int Clones = 1;
@@ -79,9 +69,9 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
     this->sinLUT = new double[mode.TotalLineSamples()];
     this->cosLUT = new double[mode.TotalLineSamples()];
 
-    dmaBuffer = new DMAVideoBuffer(mode.TotalLines, mode.TotalLineSamples() * (bits/8), Clones, true, usePsram, bufferCount);
-    if (!dmaBuffer->isValid()) {
-        delete dmaBuffer;
+    initDmaBuff(&dmaBuffer, mode.TotalLines, mode.TotalLineSamples() * (bits/8), Clones, true, usePsram, bufferCount);
+    if (!dmaBuffer.valid) {
+        deInitDmaBuff(&dmaBuffer);
         printf("Failed to create DMA Buffer\n");
         return false;
     }
@@ -265,27 +255,11 @@ bool CVBS::init(int* pins, CVBSMode mode, int bits) {
                 // populates the H sync and colorburst of all field two lines including 13 blank lines
                 populateHsync(SyncLevel, BlankLevel, phaseIncrementPerSample, lineIndex, a);
             }
+            break;
         case 3: //YPbPr Sync
             //IDK im not gonna implement the YPbPr sync yet. Im still mad about the negative voltages.
             break;
     }
-    }
-    // populating Interlacing lookup table so as to avoid having to compute offset for every single line
-    printf("Populating Interlacing Lookup Table\n");
-    for (int j = 0; j < 2; ++j) {
-        for (int i = 0; i < mode.VisibleLines; ++i) {
-            uint32_t y = (mode.Interlaced && i % 2) ? (i >> 1) + 42 + (mode.VisibleLines / 2) : (i >> 1) + 19;
-            switch(bits) {
-                case 8:
-                    // Store the pointer to the line in the lookup table
-                    ((uint8_t**)((void**)this->interlacingLUT)[j])[i] = dmaBuffer->getLineAddr8(y, j);
-                    break;
-                case 16:
-                    // Store the pointer to the line in the lookup table
-                    ((uint16_t**)((void**)this->interlacingLUT)[j])[i] = dmaBuffer->getLineAddr16(y, j);
-                    break;
-            }
-        }
     }
     //printf("Sync Completed\n");
     return true;
@@ -298,20 +272,20 @@ void CVBS::onebitdot(uint32_t x, uint32_t y, bool state) {
         case 8:
             switch(state) {
                 case true:
-                    dmaBuffer->getLineAddr8(y, backBuffer)[x] = 255;
+                    getLineAddr8(&dmaBuffer, y, backBuffer)[x] = 255;
                     break;
                 case false:
-                    dmaBuffer->getLineAddr8(y, backBuffer)[x] = 71;
+                    getLineAddr8(&dmaBuffer, y, backBuffer)[x] = 71;
                     break;
             }
             break;
         case 16:
             switch(state) {
                 case true:
-                    dmaBuffer->getLineAddr16(y, backBuffer)[x] = 65535;
+                    getLineAddr16(&dmaBuffer, y, backBuffer)[x] = 65535;
                     break;
                 case false:
-                    dmaBuffer->getLineAddr16(y, backBuffer)[x] = 65535;
+                    getLineAddr16(&dmaBuffer, y, backBuffer)[x] = 65535;
                     break;
             }
             break;
@@ -346,7 +320,7 @@ void CVBS::onebitimage(uint8_t* imagedata, int width, int height, int xoffset, i
 				uint32_t y = a;
 				calculateinterlace(y);
 				uint32_t x = totalxoffset;
-				linePtr = dmaBuffer->getLineAddr8(y, backBuffer);
+				linePtr = getLineAddr8(&dmaBuffer, y, backBuffer);
 				for (int b = 0; b < bytesPerLine; b++) {
 					uint8_t byte = imagedata[byteIndex++];	// Input byte (1bpp)
 					// Copy 8 precomputed pixels in one shot (for some reason memcpy is slower than manual copy)
@@ -371,7 +345,7 @@ void CVBS::onebitimage(uint8_t* imagedata, int width, int height, int xoffset, i
 				uint32_t y = a;
 				calculateinterlace(y);
 				uint32_t x = totalxoffset;
-				linePtr = dmaBuffer->getLineAddr16(y, backBuffer);
+				linePtr = getLineAddr16(&dmaBuffer, y, backBuffer);
 				for (int b = 0; b < bytesPerLine; b++) {
 					memcpy(&((uint16_t*)linePtr)[x], bit_expand_lut[imagedata[++byteIndex]], 8);
 					x += 8;	// Advance by 8 pixels
@@ -397,7 +371,7 @@ void CVBS::onebitchangemask(uint8_t* imagedata, uint8_t* changemask, int width, 
 				uint32_t y = a;
 				calculateinterlace(y);
 				uint32_t x = totalxoffset;
-				linePtr = dmaBuffer->getLineAddr8(y, backBuffer);
+				linePtr = getLineAddr8(&dmaBuffer, y, backBuffer);
 				for (int b = 0; b < bytesPerLine; b++) {
 					//printf("8 bits, y: %d, x: %d\n", y, x);
 					switch(changemask[byteIndex]) {
@@ -427,7 +401,7 @@ void CVBS::onebitchangemask(uint8_t* imagedata, uint8_t* changemask, int width, 
 				uint32_t y = a;
 				calculateinterlace(y);
 				uint32_t x = totalxoffset;
-				linePtr = dmaBuffer->getLineAddr16(y, backBuffer);
+				linePtr = getLineAddr16(&dmaBuffer, y, backBuffer);
 				for (int b = 0; b < bytesPerLine; b++) {
 					//printf("8 bits, y: %d, x: %d\n", y, x);
 					switch(changemask[byteIndex]) {
@@ -460,12 +434,12 @@ bool CVBS::monodot(uint32_t x, uint32_t y, uint32_t value) {
 		case 8:
 			if(value > 255) value = 255;
 			if(value < 71) value = 71;
-			dmaBuffer->getLineAddr8(y, backBuffer)[x] = value;
+			getLineAddr8(&dmaBuffer, y, backBuffer)[x] = value;
 			break;
 		case 16:
 			if(value > 65535) value = 65535;
 			if(value < 18241) value = 18241;
-			dmaBuffer->getLineAddr8(y, backBuffer)[x] = value;
+			getLineAddr16(&dmaBuffer, y, backBuffer)[x] = value;
 			break;
 		default:
 			return false; // Unsupported bits
@@ -506,7 +480,7 @@ void CVBS::monoimage(uint8_t* imagedata, int width, int height, int xoffset, int
 			for (int a = yoffset; a < maxY; a++) {
 				uint32_t y = a;
 				calculateinterlace(y);
-				linePtr = dmaBuffer->getLineAddr8(y, backBuffer);
+				linePtr = getLineAddr8(&dmaBuffer, y, backBuffer);
 				//memcpy((uint8_t*)linePtr + totalxoffset, imagedata + byteIndex, width);
 				//byteIndex += width;
 				for (int b = totalxoffset; b < xbound; b++) {
@@ -521,7 +495,7 @@ void CVBS::monoimage(uint8_t* imagedata, int width, int height, int xoffset, int
 			for (int a = yoffset; a < maxY; a++) {
 				uint32_t y = a;
 				calculateinterlace(y);
-				linePtr = dmaBuffer->getLineAddr16(y, backBuffer);
+				linePtr = getLineAddr16(&dmaBuffer, y, backBuffer);
 				for (int b = totalxoffset; b < xbound; b++) {
 					((uint16_t*)linePtr)[b] = (imagedata[byteIndex] < min) ? min : imagedata[byteIndex];
 					byteIndex++;
@@ -582,15 +556,15 @@ bool CVBS::colordot(uint32_t x, uint32_t y, uint8_t rgb332) {
 					printf("colorvalNotAllowed: %d\n", colorValue);
 					return false;
 			}
-			dmaBuffer->getLineAddr8(y, backBuffer)[x] = colorValue;
-			return dmaBuffer->getLineAddr8(y, backBuffer)[x] == colorValue;
+			getLineAddr8(&dmaBuffer, y, backBuffer)[x] = colorValue;
+			return getLineAddr8(&dmaBuffer, y, backBuffer)[x] == colorValue;
 		case 16:
 			if(colorValue > 65535 || colorValue < 0) {
 					printf("colorvalNotAllowed\n");
 					return false;
 			}
-			dmaBuffer->getLineAddr16(y, backBuffer)[x] = colorValue;
-			return dmaBuffer->getLineAddr16(y, backBuffer)[x] == colorValue;
+			getLineAddr16(&dmaBuffer, y, backBuffer)[x] = colorValue;
+			return getLineAddr16(&dmaBuffer, y, backBuffer)[x] == colorValue;
 	}
 
 	return false; // Default return if bits is neither 8 nor 16
@@ -635,15 +609,15 @@ bool CVBS::colordot(uint32_t x, uint32_t y, double lum, double i, double q) {
 					printf("colorvalNotAllowed: %d\n", colorValue);
 					return false;
 			}
-			dmaBuffer->getLineAddr8(y, backBuffer)[x] = colorValue;
-			return dmaBuffer->getLineAddr8(y, backBuffer)[x] == colorValue;
+			getLineAddr8(&dmaBuffer, y, backBuffer)[x] = colorValue;
+			return getLineAddr8(&dmaBuffer, y, backBuffer)[x] == colorValue;
 		case 16:
 			if(colorValue > 65535 || colorValue < 0) {
 					printf("colorvalNotAllowed\n");
 					return false;
 			}
-			dmaBuffer->getLineAddr16(y, backBuffer)[x] = colorValue;
-			return dmaBuffer->getLineAddr16(y, backBuffer)[x] == colorValue;
+			getLineAddr16(&dmaBuffer, y, backBuffer)[x] = colorValue;
+			return getLineAddr16(&dmaBuffer, y, backBuffer)[x] == colorValue;
 	}
 
 	return false; // Default return if bits is neither 8 nor 16
@@ -658,11 +632,11 @@ void CVBS::modulatebuffer(uint32_t carrier, int buffernumber) { // modulate buff
 	double phaseIncrement = (2.0 * M_PI * carrier) / mode.Frequency;
 	float phase = 0.0;	// Initial phase
 
-	for (int y = 0; y < dmaBuffer->lines; y++) {
+	for (int y = 0; y < dmaBuffer.lines; y++) {
 		phase = 0.0;
-		for (int x = 0; x < dmaBuffer->lineSize; x++) {
-			int value = (bits == 8) ? dmaBuffer->getLineAddr8(y, backBuffer)[x]
-															: dmaBuffer->getLineAddr16(y, backBuffer)[x];
+		for (int x = 0; x < dmaBuffer.lineSize; x++) {
+			int value = (bits == 8) ? getLineAddr8(&dmaBuffer, y, backBuffer)[x]
+															: getLineAddr16(&dmaBuffer, y, backBuffer)[x];
 
 			// Only modulate if the value is non-zero
 			int modulation = round(SinMultiplier + (sin(phase) * SinMultiplier));
@@ -671,10 +645,10 @@ void CVBS::modulatebuffer(uint32_t carrier, int buffernumber) { // modulate buff
 			// Store the modulated value back
 			switch(bits) {
 				case 8:
-					dmaBuffer->getLineAddr8(y, buffernumber)[x] = value;
+					getLineAddr8(&dmaBuffer, y, buffernumber)[x] = value;
 					break;
 				case 16:
-					dmaBuffer->getLineAddr16(y, buffernumber)[x] = value;
+					getLineAddr16(&dmaBuffer, y, buffernumber)[x] = value;
 					break;
 			}
 
@@ -693,10 +667,10 @@ void CVBS::fillbufferwithvalueforlength(int value, int len, int offset, int line
 	for (int i = 0; i < len; i++) {
 		switch(bits) {
 			case 8:
-				dmaBuffer->getLineAddr8(line, bufferNumber)[i + offset] = value;
+				getLineAddr8(&dmaBuffer, line, bufferNumber)[i + offset] = value;
 				break;
 			case 16:
-				dmaBuffer->getLineAddr16(line, bufferNumber)[i + offset] = value;
+				getLineAddr16(&dmaBuffer, line, bufferNumber)[i + offset] = value;
 				break;
 		}
 	}
@@ -707,10 +681,10 @@ void CVBS::fillbufferwithvalue(uint32_t value) {
 		for (int x = 0; x < mode.TotalLineSamples(); x++) {
 			switch(bits) {
 				case 8:
-					dmaBuffer->getLineAddr8(y, backBuffer)[x] = value;
+					getLineAddr8(&dmaBuffer, y, backBuffer)[x] = value;
 					break;
 				case 16:
-					dmaBuffer->getLineAddr16(y, backBuffer)[x] = value;
+					getLineAddr16(&dmaBuffer, y, backBuffer)[x] = value;
 					break;
 			}
 		}
@@ -718,25 +692,25 @@ void CVBS::fillbufferwithvalue(uint32_t value) {
 }
 
 int CVBS::accessbuffervalue(int x, int y, int buffernumber) {
-	if (buffernumber >= dmaBuffer->getBufferCount() || y >= dmaBuffer->lines || x >= dmaBuffer->lineSize) return -1;
+	if (buffernumber >= dmaBuffer.bufferCount || y >= dmaBuffer.lines || x >= dmaBuffer.lineSize) return -1;
 	switch(bits) {
 		case 8:
-			return dmaBuffer->getLineAddr8(y, buffernumber)[x];
+			return getLineAddr8(&dmaBuffer, y, buffernumber)[x];
 		case 16:
-			return dmaBuffer->getLineAddr16(y, buffernumber)[x];
+			return getLineAddr16(&dmaBuffer, y, buffernumber)[x];
 	}
 	return -1;
 }
 
 void CVBS::dumpbuffer(int buffernumber) { // kept as diagnostic tool
-	for (int y = 0; y < dmaBuffer->lines; y++) {
-		for (int x = 0; x < dmaBuffer->lineSize; x++) {
+	for (int y = 0; y < dmaBuffer.lines; y++) {
+		for (int x = 0; x < dmaBuffer.lineSize; x++) {
 			switch(bits) {
 				case 8:
-					printf("%d ", dmaBuffer->getLineAddr8(y, buffernumber)[x]);
+					printf("%d ", getLineAddr8(&dmaBuffer, y, buffernumber)[x]);
 					break;
 				case 16:
-					printf("%d ", dmaBuffer->getLineAddr16(y, buffernumber)[x]);
+					printf("%d ", getLineAddr16(&dmaBuffer, y, buffernumber)[x]);
 					break;
 			}
 		}
@@ -744,13 +718,13 @@ void CVBS::dumpbuffer(int buffernumber) { // kept as diagnostic tool
 }
 
 void CVBS::dumpbufferline(int y, int buffernumber) {
-	for (int x = 0; x < dmaBuffer->lineSize; x++) {
+	for (int x = 0; x < dmaBuffer.lineSize; x++) {
 		if (bits == 8) {
-			int value = dmaBuffer->getLineAddr8(y, buffernumber)[x];
+			int value = getLineAddr8(&dmaBuffer, y, buffernumber)[x];
 			printf("%d", value);
 			printf("\n");
 		} else if (bits == 16) {
-			int value = dmaBuffer->getLineAddr16(y, buffernumber)[x];
+			int value = getLineAddr16(&dmaBuffer, y, buffernumber)[x];
 			printf("%d", value);
 			printf("\n");
 		}
@@ -758,7 +732,7 @@ void CVBS::dumpbufferline(int y, int buffernumber) {
 }
 
 bool CVBS::ispositioninvalid(uint32_t x, uint32_t y) {
-	if (backBuffer >= dmaBuffer->getBufferCount() || y >= dmaBuffer->lines || x >= dmaBuffer->lineSize) return true; // position is invalid
+	if (backBuffer >= dmaBuffer.bufferCount || y >= dmaBuffer.lines || x >= dmaBuffer.lineSize) return true; // position is invalid
 	// Check if the coordinates are within the visible area
 	if (x > mode.VisibleLineSamples || y > mode.VisibleLines) return true; // position is invalid
 
@@ -799,7 +773,7 @@ bool CVBS::start() {
     esp_rom_delay_us(1);
     LCD_CAM.lcd_misc.lcd_afifo_reset = 1;
     LCD_CAM.lcd_user.lcd_update = 1;
-    gdma_start((gdma_channel_handle_t)dmaChannel, (intptr_t)dmaBuffer->getDescriptor());
+    gdma_start((gdma_channel_handle_t)dmaChannel, (intptr_t)&dmaBuffer.descriptors[0]);
     esp_rom_delay_us(1);
     LCD_CAM.lcd_user.lcd_update = 1;
     LCD_CAM.lcd_user.lcd_start = 1;
@@ -809,10 +783,10 @@ bool CVBS::start() {
 
 bool CVBS::show() {
     //TODO check start
-    dmaBuffer->flush(backBuffer);
+    flush(&dmaBuffer, backBuffer);
     if(bufferCount <= 1) 
         return true;
-    dmaBuffer->attachBuffer(backBuffer);
+    attachBuffer(&dmaBuffer, backBuffer);
     backBuffer = (backBuffer + 1) % bufferCount;
     //TODO check end
     return true;
@@ -876,9 +850,9 @@ void CVBS::populateHsync(int syncLevel, int blankLevel, double phaseIncrementPer
 				uint32_t colorValue = blankLevel + round(sin(c * phaseIncrementPerSample) * ClrBrstMultiplier);
 
 				if (bits == 8)
-					dmaBuffer->getLineAddr8(lineIndex, bufferNumber)[colorburstOffset] = colorValue;
+					getLineAddr8(&dmaBuffer, lineIndex, bufferNumber)[colorburstOffset] = colorValue;
 				else if (bits == 16)
-					dmaBuffer->getLineAddr16(lineIndex, bufferNumber)[colorburstOffset] = colorValue;
+					getLineAddr16(&dmaBuffer, lineIndex, bufferNumber)[colorburstOffset] = colorValue;
 
 				// Increment the phase for the next sample
 				//phase += phaseIncrementPerSample;

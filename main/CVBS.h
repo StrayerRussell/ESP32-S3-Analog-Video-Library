@@ -1,7 +1,7 @@
 #ifndef CVBS_H
 #define CVBS_H
 
-#include "DMAVideoBuffer.h"
+#include "DMAVideoBuffer.c"
 #include "CVBSModes.h"
 
 class CVBS
@@ -15,7 +15,7 @@ class CVBS
 	double* sinLUT;
 	double* cosLUT;
 	int backBuffer;
-	DMAVideoBuffer *dmaBuffer;
+    struct dmaBuff dmaBuffer;
 	bool usePsram;
 	int dmaChannel;
 	

@@ -18,7 +18,6 @@ CVBS cvbs;
 CVBSMode mode = CVBSMode::MODE_960x480x30NTSC;
 //CVBSMode mode = CVBSMode::MODE_FractionalDivi;
 //CVBSMode mode = CVBSMode::MODE_960x540x30NTSC;
-//CVBSMode mode = CVBSMode::MODE_20MHZNTSC;
 //CVBSMode mode = CVBSMode::MODE_21MHZNTSC;
 
 extern "C" 
