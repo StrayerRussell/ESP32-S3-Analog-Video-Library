@@ -1,5 +1,8 @@
 idf_component_register(
-    SRCS "cvbs_main.cpp" 
+    SRCS "cvbs_main.c"
+         "cvbs.c"
+         "dmaVideoBuffer.c"
+         "cvbsModes.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES esp_psram esp_driver_gpio esp_driver_dma
 )
