@@ -21,13 +21,14 @@ void app_main(void)
 {
     cvbs = CVBS_DEFAULT_CONFIG;
     mode = MODE_960x480x30NTSC;
+    //mode = MODE_21MHZNTSC;
 
     // controls whether or not the CVBS library double buffers
-    cvbs.bufferCount = 2;
+    cvbs.bufferCount = 1;
 
     // experimental color feature
-    cvbs.doColorburst = false;
-    //cvbs.doColorburst = true;
+    //cvbs.doColorburst = false;
+    cvbs.doColorburst = true;
 
     if(!cvbsInit(&cvbs, pins, mode, 8)) {
         printf("Failed to Initialize, Halting\n");
@@ -40,29 +41,80 @@ void app_main(void)
     // White value = 255
     // Black/Sync value = 71
 
-   onebitimage(&cvbs, bitonal_image, 720, 480, 120, 0);
+    //onebitimage(&cvbs, bitonal_image, 720, 480, 120, 0);
 
-    while(1) {
-        /*
-        //printf("Color Number: %d\n", color);
-        for (int y = 0; y < 540; y++)
+    int color = 0; // Reset color at the start of each line
+    
+    float colorbars[8][3] = {
+        {100, 0.0, 0},
+        {89.5, 82.70, 167.1},
+        {72.3, 116.9, 283.5},
+        {61.8, 109.2, 240.7},
+        {45.7, 109.2, 60.70},
+        {35.2, 116.9, 103.5},
+        {18.0, 82.70, 347.1},
+        {7.50, 0.000, 0.000}
+    };
+
+    float colorbars_yiq[8][3] = {
+        { 1.0000,  0.0000, -0.0000 },
+        { 0.8946,  0.2410, -0.2334 },
+        { 0.7234, -0.4469, -0.1586 },
+        { 0.6180, -0.2060, -0.3920 },
+        { 0.4570,  0.2060,  0.3920 },
+        { 0.3516,  0.4469,  0.1586 },
+        { 0.1805, -0.2410,  0.2334 },
+        { 0.0750,  0.0000,  0.0000 },
+    };
+
+    int rgb [8][3] = 
+    {
+        {255, 255, 255}, // 100% White
+        {255, 255,   0}, // 100% Yellow
+        {  0, 255, 255}, // 100% Cyan
+        {  0, 255,   0}, // 100% Green
+        {255,   0, 255}, // 100% Magenta
+        {255,   0,   0}, // 100% Red
+        {  0,   0, 255}, // 100% Blue
+        {  0,   0,   0}  // Black
+    };
+
+    while(1) 
+    {
+        printf("Clr: %d\n", color);
+        for (int y = 0; y < 160; y++)
         {
-            int color = 0; // Reset color at the start of each line
-            for (int x = 0; x < 960; x += 5)
+            for (int x = 0; x < 960; x++)
             {
-                for (int z = 0; z < 5; z++)
-                {
-                    if (x + z < 960)
-                    {
-                        //cvbs.monodot(x + z, y, linearityCompensation[color] + 71);
-                        cvbs.monodot(x + z, y, color + 71);
-                    }
-                }
-                color = (color + 1) % 256; // Cycle color between 0 and 255
+                //onebitdot(&cvbs, x + z, y, true);
+                //monodot(&cvbs, x + z, y, 100);
+                iredot(&cvbs, x, y, colorbars[x/120][0], colorbars[x/120][1], colorbars[x/120][2]);
             }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
-        cvbs.show();
-        */
+        for (int y = 161; y < 320; y++)
+        {
+            for (int x = 0; x < 960; x++)
+            {
+                //onebitdot(&cvbs, x + z, y, true);
+                //monodot(&cvbs, x + z, y, 100);
+                yiqdot(&cvbs, x, y, colorbars_yiq[x/120][0], colorbars_yiq[x/120][1], colorbars_yiq[x/120][2]);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        for (int y = 321; y < 480; y++)
+        {
+            for (int x = 0; x < 960; x++)
+            {
+                //onebitdot(&cvbs, x + z, y, true);
+                //monodot(&cvbs, x + z, y, 100);
+                rgbdot(&cvbs, x, y, rgb[x/120][0], rgb[x/120][1], rgb[x/120][2]);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        color = (color >= 50) ? 0 : (color + 1);
+        cvbsShow(&cvbs);
         vTaskDelay(pdMS_TO_TICKS(10));
+
     }
 }

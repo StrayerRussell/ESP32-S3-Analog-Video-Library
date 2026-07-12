@@ -1,4 +1,5 @@
 #include "cvbs.h"
+#include "luts.h"
 #include <string.h>
 #include <math.h>
 #include <driver/gpio.h>
@@ -22,13 +23,21 @@
 
 //borrowed from esp code
 #define HAL_FORCE_MODIFY_U32_REG_FIELD(base_reg, reg_field, field_val)		\
-{																													 \
-		uint32_t temp_val = base_reg.val;											 \
-		typeof(base_reg) temp_reg;															\
-		temp_reg.val = temp_val;																\
-		temp_reg.reg_field = (field_val);											 \
-		(base_reg).val = temp_reg.val;													\
+{																			\
+		uint32_t temp_val = base_reg.val;								    \
+		typeof(base_reg) temp_reg;											\
+		temp_reg.val = temp_val;											\
+		temp_reg.reg_field = (field_val);									\
+		(base_reg).val = temp_reg.val;										\
 }
+
+#define MAXLVL 255.0f
+#define MAXIRE 171.0f
+#define IRESCALE (MAXLVL / MAXIRE)
+#define SYNCLVL 0.0f
+#define BLANKLVL (40.0f * IRESCALE)
+#define BRSTAMP  ((40.0f * IRESCALE) / 2.0)
+#define CHROMAAMP BRSTAMP * 2.57f
 
 const struct cvbs CVBS_DEFAULT_CONFIG = {.bufferCount = 1, .doColorburst = true, .usePsram = true, .dmaChannel = 0};
 
@@ -173,56 +182,9 @@ bool cvbsInit(struct cvbs *cvbs, int* pins, struct cvbsMode mode, int bits) {
 
     int lineIndex = 0;	// keeps track of which line is currently being written to
 
-    int BlankLevel = 71;	// dac value which results in blank voltage (usually 0.3 volts) 
-    int SyncLevel = 0;
-    //int BlackLevel = 85;
-
-    //int ClrbrstVerticalOffset = BlankLevel/2;
-    //int ClrbrstPhaseSampleOffset = 0;
-    //int ClrBrstMultiplier = 50;
-    double ClrbrstSquarewaveWidth = mode.ClrBrstSamples/20.0;
-    printf("SqrWaveWdth: %f\n", ClrbrstSquarewaveWidth);
-    //ClrbrstSquarewaveWidth = round(ClrbrstSquarewaveWidth);
-    //printf("SqrWaveWdth: %f\n", ClrbrstSquarewaveWidth);
-
-    // Variables for best amplitude and phase shift
-    double BestAmplitude = 1000000;		// Example amplitude, can be any value
-    double BestPhaseShift = 0.0; // Example phase shift in radians (45 degrees)
-    //BestPhaseShift = 4.2;
-
     // Calculate the phase increment in fixed-point integer math
-    double phaseIncrementPerSample = ((2.0 * M_PI * mode.ClrBrstFreq) / mode.Frequency);
-
-    // Populate Sin and Cos lookup tables for color modulation
-    if (cvbs->doColorburst) {
-        printf("Populating Sin and Cos Lookup Tables for Color Modulation\n");
-        for (int i = 0; i < cvbs->mode.TotalLineSamples; i++) {
-                // Calculate phase with the applied phase shift
-                double phase = i * phaseIncrementPerSample + BestPhaseShift;
-
-                // Calculate the sine value with the amplitude applied
-                double preSin = sin(phase) * BestAmplitude;
-
-                // Populate the LUT with the scaled sine value
-                //this->sinLUT[i] = preSin;
-        }
-    }
-
-    /*
-    // Populate Sin and Cos lookup tables for color modulation
-    if (doColorburst) {
-    printf("Populating Sin and Cos Lookup Tables for Color Modulation\n");
-    int sinIndex = 0;
-    int togglingInverter = -1000000;
-    for (int a = 0; a < mode.TotalLineSamples/ClrbrstSquarewaveWidth; a++) {
-        for(int b = 0; b < round((ClrbrstSquarewaveWidth * a)/a); b++) {
-            //printf("");
-            this->sinLUT[sinIndex++] = BlankLevel + (ClrbrstVerticalOffset * togglingInverter);
-        }
-        togglingInverter *= -1;
-    }
-    }
-    */
+    cvbs->phaseIncPerSamp = ((2.0 * M_PI * mode.ClrBrstFreq) / mode.Frequency);
+    printf("PhaseInc: %lf\n", cvbs->phaseIncPerSamp);
 
     for (int a = 0; a < cvbs->bufferCount; a++) {
     lineIndex = 0;
@@ -231,33 +193,33 @@ bool cvbsInit(struct cvbs *cvbs, int* pins, struct cvbsMode mode, int bits) {
         case 1:	//NTSC Sync
             printf("Starting NTSC Sync Population\n");
             //Populates entire framebuffer with Blank level for later sync overwriting
-            for (int b = 0; b < cvbs->mode.TotalLines; b++) { fillbufferwithvalueforlength(cvbs, BlankLevel, cvbs->mode.TotalLineSamples, 0, b, a); }
+            for (int b = 0; b < cvbs->mode.TotalLines; b++) { fillbufferwithvalueforlength(cvbs, BLANKLVL, cvbs->mode.TotalLineSamples, 0, b, a); }
             // populates V sync for field one
-            populateVsync(cvbs, false, SyncLevel, 6, 6, 6, &lineIndex, a);
+            populateVsync(cvbs, false, 6, 6, 6, &lineIndex, a);
             // populates the H sync and colorburst of all field one lines including 13 blank lines
-            populateHsync(cvbs, SyncLevel, BlankLevel, phaseIncrementPerSample, &lineIndex, a);
+            populateHsync(cvbs, &lineIndex, a);
 
             if (cvbs->mode.Interlaced) {
                 // populates V sync for field two, begins and ends with a 1/2 line offset to signify that it is field two
-                populateVsync(cvbs, true, SyncLevel, 6, 6, 6, &lineIndex, a);
+                populateVsync(cvbs, true, 6, 6, 6, &lineIndex, a);
                 // populates the H sync and colorburst of all field two lines including 13 blank lines
-                populateHsync(cvbs, SyncLevel, BlankLevel, phaseIncrementPerSample, &lineIndex, a);
+                populateHsync(cvbs, &lineIndex, a);
             }
             break;
         case 2: //PAL Sync
             printf("Starting PAL Sync Population\n");
             //Populates entire framebuffer with Blank level for later sync overwriting
-            for (int b = 0; b < cvbs->mode.TotalLines; b++) { fillbufferwithvalueforlength(cvbs, BlankLevel, cvbs->mode.TotalLineSamples, 0, b, a); }
+            for (int b = 0; b < cvbs->mode.TotalLines; b++) { fillbufferwithvalueforlength(cvbs, BLANKLVL, cvbs->mode.TotalLineSamples, 0, b, a); }
             // populates V sync for field one
-            populateVsync(cvbs, false, SyncLevel, 6, 5, 5, &lineIndex, a);
+            populateVsync(cvbs, false, 6, 5, 5, &lineIndex, a);
             // populates the H sync and colorburst of all field one lines including 13 blank lines
-            populateHsync(cvbs, SyncLevel, BlankLevel, phaseIncrementPerSample, &lineIndex, a);
+            populateHsync(cvbs, &lineIndex, a);
 
             if (cvbs->mode.Interlaced) {
                 // populates V sync for field two, begins and ends with a 1/2 line offset to signify that it is field two
-                populateVsync(cvbs, false, SyncLevel, 5, 5, 4, &lineIndex, a);
+                populateVsync(cvbs, false, 5, 5, 4, &lineIndex, a);
                 // populates the H sync and colorburst of all field two lines including 13 blank lines
-                populateHsync(cvbs, SyncLevel, BlankLevel, phaseIncrementPerSample, &lineIndex, a);
+                populateHsync(cvbs, &lineIndex, a);
             }
             break;
         case 3: //YPbPr Sync
@@ -270,8 +232,9 @@ bool cvbsInit(struct cvbs *cvbs, int* pins, struct cvbsMode mode, int bits) {
 }
 
 void onebitdot(struct cvbs *cvbs, uint32_t x, uint32_t y, bool state) {
-    if(ispositioninvalid(cvbs, x, y)) return;
-    calculateinterlace(cvbs, &y);
+	if(ispositioninvalid(cvbs, x, y)) return;
+	calculateinterlace(cvbs, &y);
+	x = calculatetotalxoffset(cvbs, x);
     switch(cvbs->bits) {
         case 8:
             switch(state) {
@@ -432,6 +395,8 @@ void onebitchangemask(struct cvbs *cvbs, uint8_t* imagedata, uint8_t* changemask
 
 bool monodot(struct cvbs *cvbs, uint32_t x, uint32_t y, uint32_t value) {
 	if(ispositioninvalid(cvbs, x, y)) return false;
+	calculateinterlace(cvbs, &y);
+	x = calculatetotalxoffset(cvbs, x);
 	switch(cvbs->bits) {
 		case 8:
 			if(value > 255) value = 255;
@@ -502,69 +467,88 @@ void monoimage(struct cvbs *cvbs, uint8_t* imagedata, int width, int height, int
 	}
 }
 
-bool colordot(struct cvbs *cvbs, uint32_t x, uint32_t y, uint8_t rgb332) {
-	bool firstPixel = false;
-	if(y == 0) firstPixel = true;
+bool iredot(struct cvbs *cvbs, uint32_t x, uint32_t y, float lum, float mult, float shft) {
 	if(ispositioninvalid(cvbs, x, y)) return false;
+	calculateinterlace(cvbs, &y);
+	x = calculatetotalxoffset(cvbs, x);
+    //int modIndex = (y * cvbs->mode.TotalLineSamples) + x;
+    int modIndex = x;
 
-	int r = ((rgb332 >> 5) * 0x49) >> 1;
-	int g = (((rgb332 >> 2) & 0x07) * 0x49) >> 1;
-	int b = ((rgb332 & 0x03) * 0x55);
-	//float lum = 0.299 * r + 0.587 * g + 0.114 * b;
-	//float i = (b - lum) * -0.2680f + (r - lum) * 0.7358f;
-	//float q = (b - lum) *	0.4127f + (r - lum) * 0.4778f;
-	float lum = 0.299 * r + 0.587 * g + 0.114 * b;
-	float i = 0.596 * r - 0.274 * g - 0.322 * b;
-	float q = 0.211 * r - 0.523 * g + 0.311 * b;	 //(-0.614777, 0.614777)s
+    lum = (lum * IRESCALE);
+    mult = ((mult / 2.0) * IRESCALE);
 
+	int chromaValue = round(mult * sin((cvbs->phaseIncPerSamp * modIndex) + ((M_PI/180) * (shft - 33))));
+	int colorValue = BLANKLVL + lum + chromaValue;
 
-	int colorburstOffset = cvbs->mode.HBackSamples - cvbs->mode.ClrBrstHBackOffset;
-
-	// Calculate the phase increment per sample based on the desired frequency
-	//double phaseIncrement = (2.0 * M_PI * mode.ClrBrstFreq) / mode.Frequency;
-	//double phase = (x - colorburstOffset - 5) * phaseIncrement;
-
-	int modulationIndex = x - colorburstOffset;
-
-	//double maxDither = 5.0;
-	//double minDither = 0.0;
-	double dither = 0.0;
-
-	// Calculate the modulated color value using the sine and cosine functions at the current phase
-	//dither = ((double)(rand() % 100) / 100.0) * maxDither * 2 - minDither; // Random value between -maxDither and +maxDither
-	//double chromaValue = (q * this->sinLUT[modulationIndex] + i * this->cosLUT[modulationIndex]) / 1000000;
-	//double chromaValue = (sqrt((q * q) + (i * i)) * this->sinLUT[modulationIndex]) / 1000000;
-    double chromaValue = 0;
-
-	double highPrecolorValue = 71 + lum + chromaValue + dither;
-	int colorValue = round(highPrecolorValue);
-	//int colorValue = (71 + 120 + sin(phase) * 25);
-
-	if(firstPixel) {
-		//printf("Color: %d, X: %d, Err: %f\n", rgb332, x, highPrecolorValue - colorValue);
-	}
-
-	colorValue = colorValue < 0 ? 0 : colorValue > 255 ? 255 : colorValue;
-
-	//colorValue += 71;
 	switch(cvbs->bits) {
 		case 8:
-			if((colorValue > 255) || (colorValue < 0)) {
-					printf("colorvalNotAllowed: %d\n", colorValue);
-					return false;
-			}
-			getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = colorValue;
-			return getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] == colorValue;
+			getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
 		case 16:
-			if(colorValue > 65535 || colorValue < 0) {
-					printf("colorvalNotAllowed\n");
-					return false;
-			}
-			getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = colorValue;
-			return getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] == colorValue;
+			getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
 	}
 
 	return false; // Default return if bits is neither 8 nor 16
+}
+
+bool yiqdot(struct cvbs *cvbs, uint32_t x, uint32_t y, float y_lum, float i_val, float q_val) {
+    if(ispositioninvalid(cvbs, x, y)) return false;
+    calculateinterlace(cvbs, &y);
+    x = calculatetotalxoffset(cvbs, x);
+    //int modIndex = (y * cvbs->mode.TotalLineSamples) + x;
+    int modIndex = x;
+
+    float lumaDac = (y_lum * 100.0) * IRESCALE;
+    float iDac = i_val * 114.0 * IRESCALE;
+    float qDac = q_val * 114.0 * IRESCALE;
+
+    float trigOffset = cvbs->phaseIncPerSamp * modIndex;
+    
+    int chromaValue = round(iDac * cos(trigOffset) + qDac * sin(trigOffset));
+    int colorValue = BLANKLVL + lumaDac + chromaValue;
+
+
+    switch(cvbs->bits) {
+        case 8:
+            getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
+        case 16:
+            getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
+    }
+
+    return false;
+}
+
+bool rgbdot(struct cvbs *cvbs, uint32_t x, uint32_t y, int r, int g, int b) {
+    if(ispositioninvalid(cvbs, x, y)) return false;
+    calculateinterlace(cvbs, &y);
+    x = calculatetotalxoffset(cvbs, x);
+    //int modIndex = (y * cvbs->mode.TotalLineSamples) + x;
+    int modIndex = x;
+
+    // FCC NTSC 1953 Matrix Equations
+    float lumaDac = ((0.108461 * r) + (0.212931 * g) + (0.041353 * b)) * IRESCALE;
+    float iDac = ((0.199801 * r) - (0.092071 * g) - (0.107730 * b)) * IRESCALE;
+    float qDac = ((0.070914 * r) - (0.175258 * g) + (0.104343 * b)) * IRESCALE; 
+
+    float trigOffset = cvbs->phaseIncPerSamp * modIndex;
+    
+    int chromaValue = round(iDac * cos(trigOffset) + qDac * sin(trigOffset));
+    int colorValue = BLANKLVL + lumaDac + chromaValue;
+
+
+    switch(cvbs->bits) {
+        case 8:
+            getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
+        case 16:
+            getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[colorValue];
+            break;
+    }
+
+    return false;
 }
 
 void modulatebuffer(struct cvbs *cvbs, uint32_t carrier, int bufferNumber) { // modulate buffer by a carrier intended for transmission of NTSC via VHF/UHF
@@ -579,8 +563,9 @@ void modulatebuffer(struct cvbs *cvbs, uint32_t carrier, int bufferNumber) { // 
 	for (int y = 0; y < cvbs->dmaBuffer.lines; y++) {
 		phase = 0.0;
 		for (int x = 0; x < cvbs->dmaBuffer.lineSize; x++) {
-			int value = (cvbs->bits == 8) ? getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x]
-															: getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x];
+			int value = (cvbs->bits == 8) 
+                ? getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x]
+			    : getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x];
 
 			// Only modulate if the value is non-zero
 			int modulation = round(SinMultiplier + (sin(phase) * SinMultiplier));
@@ -601,6 +586,7 @@ void modulatebuffer(struct cvbs *cvbs, uint32_t carrier, int bufferNumber) { // 
 	}
 }
 
+
 void clear(struct cvbs *cvbs, int value) {
 	for(int y = 0; y < cvbs->mode.VisibleLines; y++)
 			for(int x = 0; x < cvbs->mode.VisibleLineSamples; x++)
@@ -611,10 +597,10 @@ void fillbufferwithvalueforlength(struct cvbs *cvbs, int value, int len, int off
 	for (int i = 0; i < len; i++) {
 		switch(cvbs->bits) {
 			case 8:
-				getLineAddr8(&cvbs->dmaBuffer, line, bufferNumber)[i + offset] = value;
+				getLineAddr8(&cvbs->dmaBuffer, line, bufferNumber)[i + offset] = r2r_lut[value];
 				break;
 			case 16:
-				getLineAddr16(&cvbs->dmaBuffer, line, bufferNumber)[i + offset] = value;
+				getLineAddr16(&cvbs->dmaBuffer, line, bufferNumber)[i + offset] = r2r_lut[value];
 				break;
 		}
 	}
@@ -625,10 +611,10 @@ void fillbufferwithvalue(struct cvbs *cvbs, uint32_t value) {
 		for (int x = 0; x < cvbs->mode.TotalLineSamples; x++) {
 			switch(cvbs->bits) {
 				case 8:
-					getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = value;
+					getLineAddr8(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[value];
 					break;
 				case 16:
-					getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = value;
+					getLineAddr16(&cvbs->dmaBuffer, y, cvbs->backBuffer)[x] = r2r_lut[value];
 					break;
 			}
 		}
@@ -665,12 +651,10 @@ void dumpbufferline(struct cvbs *cvbs, int y, int bufferNumber) {
 	for (int x = 0; x < cvbs->dmaBuffer.lineSize; x++) {
 		if (cvbs->bits == 8) {
 			int value = getLineAddr8(&cvbs->dmaBuffer, y, bufferNumber)[x];
-			printf("%d", value);
-			printf("\n");
+			printf("%d\n", value);
 		} else if (cvbs->bits == 16) {
 			int value = getLineAddr16(&cvbs->dmaBuffer, y, bufferNumber)[x];
-			printf("%d", value);
-			printf("\n");
+			printf("%d\n", value);
 		}
 	}
 }
@@ -693,7 +677,7 @@ void calculateinterlace(struct cvbs *cvbs, uint32_t *y) {
 
 uint32_t calculatetotalxoffset(struct cvbs *cvbs, uint32_t xoffset) {
 	// Calculate total x offset based on the mode
-	uint32_t totalxoffset = xoffset + cvbs->mode.HSyncSamples + cvbs->mode.HBackSamples + 1;
+	uint32_t totalxoffset = xoffset + cvbs->mode.HSyncSamples + cvbs->mode.HBackSamples;
 	return totalxoffset; // Return the calculated total x offset
 }
 
@@ -735,26 +719,26 @@ bool cvbsShow(struct cvbs *cvbs) {
     //TODO check end
     return true;
 }
-void populateVsync(struct cvbs *cvbs, bool halfOffset, int syncLevel, int numPre, int numSync, int numPost, int *lineIndex, int bufferNumber) {
+void populateVsync(struct cvbs *cvbs, bool halfOffset, int numPre, int numSync, int numPost, int *lineIndex, int bufferNumber) {
 	// Handles 6 NTSC Pre Equalisation Pulses. 2 Per Line Repeats 3 times for a total of 6
 	int sampleIndex = 0;
 	int lineSamples = cvbs->mode.TotalLineSamples;
 	int halfLineSamples = cvbs->mode.TotalLineSamples / 2;
 	if(halfOffset) sampleIndex = halfLineSamples;
 	for (int b = 0; b < numPre; b++) {
-		fillbufferwithvalueforlength(cvbs, syncLevel, cvbs->mode.EqPulseSamples, sampleIndex, *lineIndex, bufferNumber);
+		fillbufferwithvalueforlength(cvbs, SYNCLVL, cvbs->mode.EqPulseSamples, sampleIndex, *lineIndex, bufferNumber);
 		sampleIndex += halfLineSamples;
 		if(sampleIndex >= lineSamples) {(*lineIndex)++; sampleIndex = 0;}
 	}
 	// Handles 6 NTSC V Sync Broad Pulses. 2 Per Line Repeats 3 times for a total of 6
 	for (int b = 0; b < numSync; b++) {
-		fillbufferwithvalueforlength(cvbs, syncLevel, cvbs->mode.BroadPulseSamples, sampleIndex, *lineIndex, bufferNumber);
+		fillbufferwithvalueforlength(cvbs, SYNCLVL, cvbs->mode.BroadPulseSamples, sampleIndex, *lineIndex, bufferNumber);
 		sampleIndex += halfLineSamples;
 		if(sampleIndex >= lineSamples) {(*lineIndex)++; sampleIndex = 0;}
 	}
 	// Handles 6 NTSC Post Equalisation Pulses. 2 Per Line Repeats 3 times for a total of 6
 	for (int b = 0; b < numPost; b++) {
-		fillbufferwithvalueforlength(cvbs, syncLevel, cvbs->mode.EqPulseSamples, sampleIndex, *lineIndex, bufferNumber);
+		fillbufferwithvalueforlength(cvbs, SYNCLVL, cvbs->mode.EqPulseSamples, sampleIndex, *lineIndex, bufferNumber);
 		sampleIndex += halfLineSamples;
 		if(sampleIndex >= lineSamples) {(*lineIndex)++; sampleIndex = 0;}
 	}
@@ -762,47 +746,35 @@ void populateVsync(struct cvbs *cvbs, bool halfOffset, int syncLevel, int numPre
 	return;
 }
 
-void populateHsync(struct cvbs *cvbs, int syncLevel, int blankLevel, double phaseIncrementPerSample, int *lineIndex, int bufferNumber) {
-    //int ClrbrstVerticalOffset = blankLevel/2;
-	int ClrbrstPhaseSampleOffset = 0;
-	int ClrBrstMultiplier = 50;
-	//int ClrbrstSquarewaveWidth = mode.ClrBrstSamples/20;
+void populateHsync(struct cvbs *cvbs, int *lineIndex, int bufferNumber) {
 	// Handles H sync of 13 blank lines and first field of active video lines. Active video lines are basically the same as
 	// blank lines until actual picure data is written to them so the same funciton is used
-	int pictureLines = cvbs->mode.Interlaced ? cvbs->mode.VisibleLines/2 : cvbs->mode.VisibleLines;
+    int pictureLines = cvbs->mode.Interlaced ? cvbs->mode.VisibleLines/2 : cvbs->mode.VisibleLines;
 	for (int b = 0; b < pictureLines + 13; b++) {
 		// Only populates H sync because both porches are already covered by existing blank level.
 		// Active video area offset still requires knowing how long the porches are so the variables
 		// are kept in the mode declaration
-		fillbufferwithvalueforlength(cvbs, syncLevel, cvbs->mode.HSyncSamples, 0, *lineIndex, bufferNumber);
-		// colorburst generation logic
-		if(cvbs->doColorburst) {
-			//int colorburstOffset = mode.HSyncSamples + mode.ClrBrstHBackOffset;
-			/*
-			for(int c = 0; c < 10; c++) {
-				fillbufferwithvalueforlength(blankLevel + ClrbrstVerticalOffset, ClrbrstSquarewaveWidth, colorburstOffset, *lineIndex, bufferNumber);
-				colorburstOffset += ClrbrstSquarewaveWidth;
-				fillbufferwithvalueforlength(blankLevel - ClrbrstVerticalOffset, ClrbrstSquarewaveWidth, colorburstOffset, *lineIndex, bufferNumber);
-				colorburstOffset += ClrbrstSquarewaveWidth;
-			}
-			*/
-			
-			for (int c = ClrbrstPhaseSampleOffset; c < cvbs->mode.ClrBrstSamples + ClrbrstPhaseSampleOffset; c++) {
+		fillbufferwithvalueforlength(cvbs, SYNCLVL, cvbs->mode.HSyncSamples, 0, *lineIndex, bufferNumber);
+        // colorburst generation logic
+        if(cvbs->doColorburst) {
+            for (int c = 0; c < cvbs->mode.ClrBrstSamples; c++) {
 
-				uint32_t colorburstOffset = cvbs->mode.HSyncSamples + cvbs->mode.ClrBrstHBackOffset + c;
-				uint32_t colorValue = blankLevel + round(sin(c * phaseIncrementPerSample) * ClrBrstMultiplier);
+                uint32_t colorburstOffset = cvbs->mode.HSyncSamples + cvbs->mode.ClrBrstHBackOffset + c;
+                //uint32_t sinOffset = ((*lineIndex) * cvbs->mode.TotalLineSamples) + colorburstOffset;
+                uint32_t sinOffset = colorburstOffset;
+                
+                // FIX: Compute raw subcarrier accumulated angle, then add absolute M_PI phase offset
+                float subcarrierAngle = cvbs->phaseIncPerSamp * sinOffset;
+                float burstPhaseRad = M_PI - (33.0 * M_PI/180); // 180 degrees reference
+                
+                uint32_t colorValue = BLANKLVL + round(sin(subcarrierAngle + burstPhaseRad) * BRSTAMP);
 
-				if (cvbs->bits == 8)
-					getLineAddr8(&cvbs->dmaBuffer, *lineIndex, bufferNumber)[colorburstOffset] = colorValue;
-				else if (cvbs->bits == 16)
-					getLineAddr16(&cvbs->dmaBuffer, *lineIndex, bufferNumber)[colorburstOffset] = colorValue;
-
-				// Increment the phase for the next sample
-				//phase += phaseIncrementPerSample;
-			}
-			
-			//phase = 0.0;
-		}
+                if (cvbs->bits == 8)
+                    getLineAddr8(&cvbs->dmaBuffer, *lineIndex, bufferNumber)[colorburstOffset] = r2r_lut[colorValue];
+                else if (cvbs->bits == 16)
+                    getLineAddr16(&cvbs->dmaBuffer, *lineIndex, bufferNumber)[colorburstOffset] = r2r_lut[colorValue];
+            }
+        }
 		(*lineIndex)++;
     }
 }

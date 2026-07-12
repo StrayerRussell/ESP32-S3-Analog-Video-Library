@@ -2,6 +2,23 @@
 #define CVBSMODE_H
 #include <stdint.h>
 
+struct cvbsType {
+    int width;
+    int height;
+    float burstFreq;
+    float lineUs;
+    float fPorchUs;
+    float hSyncUs;
+    float bPorchUs;
+    float brstStartUs;
+    float burstUs;
+    float visibleUs;
+    float eqPulseUs;
+    float broadPulseUs;
+};
+
+extern const struct cvbsType NTSC;
+
 struct cvbsMode {
     int EqPulseSamples;
     int BroadPulseSamples;

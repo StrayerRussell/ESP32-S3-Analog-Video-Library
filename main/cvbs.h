@@ -6,6 +6,7 @@
 
 struct cvbs {
     struct cvbsMode mode;
+    double phaseIncPerSamp;
 	int bufferCount;
 	bool doColorburst;
 	int bits;
@@ -22,8 +23,8 @@ struct cvbs cvbsDefaultConfig();
 void cvbsDeInit(struct cvbs *cvbs);
 void fillbufferwithvalueforlength(struct cvbs *cvbs, int value, int len, int offset, int line, int bufferNumber);
 //line index might be a problem
-void populateVsync(struct cvbs *cvbs, bool halfOffset, int syncLevel, int numPre, int numSync, int numPost, int *lineIndex, int bufferNumber);
-void populateHsync(struct cvbs *cvbs, int syncLevel, int blankLevel, double phaseIncrementPerSample, int *lineIndex, int bufferNumber);
+void populateVsync(struct cvbs *cvbs, bool halfOffset, int numPre, int numSync, int numPost, int *lineIndex, int bufferNumber);
+void populateHsync(struct cvbs *cvbs, int *lineIndex, int bufferNumber);
 bool cvbsInit(struct cvbs *cvbs, int* pins, struct cvbsMode mode, int bits);
 bool cvbsStart(struct cvbs *cvbs);
 bool cvbsShow(struct cvbs *cvbs);
@@ -32,7 +33,10 @@ void onebitimage(struct cvbs *cvbs, uint8_t* imagedata, int width, int height, i
 void onebitchangemask(struct cvbs *cvbs, uint8_t* imagedata, uint8_t* changemask, int width, int height, int xoffset, int yoffset);
 bool monodot(struct cvbs *cvbs, uint32_t x, uint32_t y, uint32_t value);
 void monoimage(struct cvbs *cvbs, uint8_t* imagedata, int width, int height, int xoffset, int yoffset);
-bool colordot(struct cvbs *cvbs, uint32_t x, uint32_t y, uint8_t rgb332);
+bool iredot(struct cvbs *cvbs, uint32_t x, uint32_t y, float lum, float mult, float shft);
+bool yiqdot(struct cvbs *cvbs, uint32_t x, uint32_t y, float lum, float sat, float val);
+bool rgbdot(struct cvbs *cvbs, uint32_t x, uint32_t y, int r, int g, int b);
+bool colordot(struct cvbs *cvbs, uint32_t x, uint32_t y, uint8_t lum, uint16_t chroma);
 void fillbufferwithvalue(struct cvbs *cvbs, uint32_t value);
 void dotdit(struct cvbs *cvbs, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b);
 int accessbuffervalue(struct cvbs *cvbs, int x, int y, int buffervalue);
